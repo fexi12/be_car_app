@@ -1,47 +1,72 @@
+# car/database.py
+import os
 import sqlite3
+import psycopg2
+
+DATABASE_URL = os.getenv("DATABASE_URL")  # set by Railway's Postgres
+
+def is_pg(): return bool(DATABASE_URL)
 
 def create_connection():
-    # Create and return a database connection
-    conn = sqlite3.connect('database.db')
-    return conn
+    if is_pg():
+        return psycopg2.connect(DATABASE_URL)
+    return sqlite3.connect("database.db", check_same_thread=False)
 
-def create_table():
-    # Create a connection to the database
+def create_tables():
     conn = create_connection()
-    cursor = conn.cursor()
+    cur = conn.cursor()
 
-    # Create the 'vehicles' table if it does not exist
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS vehicles (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        marca TEXT,
-        modelo TEXT,
-        CC TEXT,
-        cor TEXT,
-        matricula TEXT,
-        ano INTEGER,
-        num_lugares TEXT,
-        local_garagem TEXT,
-        estado_geral TEXT,
-        photo TEXT  -- No need for NULL here; it's the default behavior
-    );
-    ''')
+    if is_pg():
+        # PostgreSQL schema
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vehicles (
+          id SERIAL PRIMARY KEY,
+          brand TEXT,
+          model TEXT,
+          year INTEGER,
+          plate TEXT UNIQUE
+        );
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vehicle_photos (
+          id SERIAL PRIMARY KEY,
+          vehicle_id INTEGER REFERENCES vehicles(id) ON DELETE CASCADE,
+          photo TEXT
+        );
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL
+        );
+        """)
+    else:
+        # SQLite schema (adjust to match your current columns)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vehicles (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          brand TEXT,
+          model TEXT,
+          year INTEGER,
+          plate TEXT UNIQUE
+        );
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS vehicle_photos (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          vehicle_id INTEGER,
+          photo TEXT,
+          FOREIGN KEY(vehicle_id) REFERENCES vehicles(id) ON DELETE CASCADE
+        );
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          username TEXT UNIQUE NOT NULL,
+          password_hash TEXT NOT NULL
+        );
+        """)
 
-    # Create the 'vehicle_photos' table if it does not exist
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS vehicle_photos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        vehicle_id INTEGER,
-        photo TEXT,
-        FOREIGN KEY(vehicle_id) REFERENCES vehicles(id) ON DELETE CASCADE
-    );
-    ''')
-
-    # Commit changes and close the connection
     conn.commit()
     conn.close()
-
-    print("Database, vehicles table, and vehicle_photos table successfully!")
-
-# Call create_table to create the tables if they don't exist
-create_table()

@@ -1,2 +1,8 @@
 ./car/build
 ./car/dist
+__pycache__/*
+*.pyc
+.env
+database.db
+*.sqlite*
+static/uploads/*
