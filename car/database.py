@@ -5,26 +5,42 @@ import psycopg2
 
 DATABASE_URL = os.getenv("DATABASE_URL")  # set by Railway's Postgres
 
-def is_pg(): return bool(DATABASE_URL)
+def is_pg() -> bool:
+    return bool(DATABASE_URL)
+
+def sqlp(query: str) -> str:
+    """Adapta placeholders do SQLite (?) para Postgres (%s)."""
+    return query.replace("?", "%s") if is_pg() else query
 
 def create_connection():
     if is_pg():
-        return psycopg2.connect(DATABASE_URL)
-    return sqlite3.connect("database.db", check_same_thread=False)
+        # força sslmode=require se não vier na URL (Railway/Postgres costuma pedir)
+        url = DATABASE_URL
+        if "sslmode=" not in (url or ""):
+            sep = "&" if "?" in (url or "") else "?"
+            url = f"{url}{sep}sslmode=require"
+        return psycopg2.connect(url)
+    conn = sqlite3.connect("database.db", check_same_thread=False)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
 
 def create_tables():
     conn = create_connection()
     cur = conn.cursor()
 
     if is_pg():
-        # PostgreSQL schema
         cur.execute("""
         CREATE TABLE IF NOT EXISTS vehicles (
           id SERIAL PRIMARY KEY,
-          brand TEXT,
-          model TEXT,
-          year INTEGER,
-          plate TEXT UNIQUE
+          marca TEXT,
+          modelo TEXT,
+          CC INTEGER,
+          cor TEXT,
+          matricula TEXT UNIQUE,
+          ano INTEGER,
+          num_lugares INTEGER,
+          local_garagem TEXT,
+          estado_geral TEXT
         );
         """)
         cur.execute("""
@@ -42,14 +58,18 @@ def create_tables():
         );
         """)
     else:
-        # SQLite schema (adjust to match your current columns)
         cur.execute("""
         CREATE TABLE IF NOT EXISTS vehicles (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
-          brand TEXT,
-          model TEXT,
-          year INTEGER,
-          plate TEXT UNIQUE
+          marca TEXT,
+          modelo TEXT,
+          CC INTEGER,
+          cor TEXT,
+          matricula TEXT UNIQUE,
+          ano INTEGER,
+          num_lugares INTEGER,
+          local_garagem TEXT,
+          estado_geral TEXT
         );
         """)
         cur.execute("""

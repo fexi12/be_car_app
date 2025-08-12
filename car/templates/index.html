@@ -1,90 +1,23 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Portfolio Veiculos</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/foundation-sites/dist/css/foundation.min.css"> <!-- Foundation CSS -->
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css"> 
-</head>
-<body>
-    <div class="grid-container">
-        <div class="grid-x grid-margin-x">
-            <div class="cell small-6">
-                <a href="{{ url_for('add_vehicle') }}" class="button success">Adicionar Veículo</a>
-            </div>
-            <div class="cell small-6 text-right">
-                <form action="{{ url_for('shutdown') }}" method="POST">
-                    <button type="submit" class="button alert">
-                        <i class="fa-solid fa-power-off"></i> <!-- Icon for closing -->
-                    </button>
-                </form>
-            </div>
-        </div>
-
-        <h1 class="text-center">Lista de Veiculos</h1>
-        <table class="hover unstriped">
-            <thead>
-                <tr>
-                    <th>Marca</th>
-                    <th>Modelo</th>
-                    <th>Ano</th>
-                    <th>Local | Garagem</th>
-                    <th>Foto</th>
-                    <th>Operação</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for vehicle in vehicles %}
-                    <tr>
-                        <td>{{ vehicle['marca'] | default('N/A') }}</td>  <!-- Marca -->
-                        <td>{{ vehicle['modelo'] | default('N/A') }}</td>  <!-- Modelo -->
-                        <td>{{ vehicle['ano'] | default('N/A') }}</td>  <!-- Ano -->
-                        <td>{{ vehicle['local_garagem'] | default('N/A') }}</td> <!-- Local | Garagem -->
-                        <td>
-                            {% if vehicle['first_photo'] %}
-                                <img src="{{ url_for('static', filename='uploads/' + vehicle['first_photo']) }}" alt="Vehicle" style="max-width: 100px;">
-                                
-                            {% else %}<p>No photo</p>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <a href="{{ url_for('edit_vehicle', vehicle_id=vehicle['id']) }}" class="button warning">Editar</a>
-                            <button class="button alert" onclick="openModal('{{ vehicle['id'] }}')">Apagar</button>
-
-                        </td>
-                    </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-
-    <!-- Include the modal from another file -->
-    {% include 'modal.html' %}
-
-    <script src="https://cdn.jsdelivr.net/npm/jquery/dist/jquery.min.js"></script> <!-- jQuery -->
-    <script src="https://cdn.jsdelivr.net/npm/foundation-sites/dist/js/foundation.min.js"></script> <!-- Foundation JS -->
-    <script>
-        $(document).foundation(); // Initialize Foundation
-
-        // JavaScript to handle modal functionality
-        function openModal(vehicleId) {
-            document.getElementById('vehicle_id').value = vehicleId; // Set vehicle ID
-            document.getElementById('deleteForm').action = '/delete/' + vehicleId; // Set the form action to the delete URL
-            document.getElementById('myModal').style.display = "block"; // Show the modal
-        }
-
-        function closeModal() {
-            document.getElementById('myModal').style.display = "none"; // Hide the modal
-        }
-
-        // Close the modal when the user clicks anywhere outside of the modal
-        window.onclick = function(event) {
-            if (event.target === document.getElementById('myModal')) {
-                closeModal();
-            }
-        }
-    </script>
-</body>
-</html>
+{% extends "base.html" %}
+{% block title %}Veículos{% endblock %}
+{% block content %}
+<h1>Veículos</h1>
+<p><a href="{{ url_for('main.add_vehicle') }}">Adicionar</a> | <a href="{{ url_for('logout') }}">Sair</a></p>
+<table border="1" cellpadding="6" cellspacing="0">
+  <tr><th>ID</th><th>Marca</th><th>Modelo</th><th>Matrícula</th><th>Ano</th><th>Foto</th></tr>
+  {% for v in vehicles %}
+  <tr>
+    <td>{{ v[0] }}</td>
+    <td>{{ v[1] }}</td>
+    <td>{{ v[2] }}</td>
+    <td>{{ v[3] }}</td>
+    <td>{{ v[4] }}</td>
+    <td>
+      {% if v[5] %}
+        <img src="{{ url_for('main.uploaded_file', filename=v[5]) }}" alt="" style="height:64px">
+      {% else %}-{% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
