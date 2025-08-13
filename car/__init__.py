@@ -3,6 +3,7 @@ import os
 from flask import Flask
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required
 from .database import create_tables, create_connection
+from flask import jsonify
 
 class User(UserMixin):
     def __init__(self, id, username):
@@ -61,6 +62,23 @@ def create_app():
             flash("Credenciais inválidas.", "error")
         return render_template("login.html")
 
+    @app.route("/login", methods=["GET", "POST"])
+    def login():
+        if request.method == "POST":
+            username = request.form.get("username")
+            password = request.form.get("password")
+            conn = create_connection()
+            cur = conn.cursor()
+            cur.execute(sqlp("SELECT id, username, password_hash FROM users WHERE username = ?"), (username,))
+            row = cur.fetchone()
+            conn.close()
+            if row and check_password_hash(row[2], password):
+                from flask_login import login_user
+                login_user(User(row[0], row[1]))
+                return redirect(url_for("main.index"))
+            flash("Credenciais inválidas.", "error")
+        return render_template("login.html")
+    
     @app.route("/logout")
     @login_required
     def logout():
