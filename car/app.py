@@ -87,15 +87,19 @@ def add_vehicle():
         photos = request.files.getlist('photos')  # This will return a list of file objects
         for photo in photos:
             if photo and photo.filename:
-                photo_filename = os.path.join(app.config['UPLOAD_FOLDER'], photo.filename)
-                print("Saving photo:", photo_filename)  # Debugging line
-                photo.save(photo_filename)
+                filename = secure_filename(photo.filename)
+                photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                print("Saving photo:", photo_path)  # Debugging line
+                photo.save(photo_path)
 
                 # Insert the photo into the vehicle_photos table
-                cursor.execute('''
+                cursor.execute(
+                    """
                     INSERT INTO vehicle_photos (vehicle_id, photo)
                     VALUES (?, ?)
-                ''', (vehicle_id, photo.filename))
+                    """,
+                    (vehicle_id, filename),
+                )
 
         # Commit the changes and close the connection
         conn.commit()
@@ -156,11 +160,15 @@ def edit_vehicle(vehicle_id):
         new_photos = request.files.getlist('photos')
         for photo in new_photos:
             if photo and photo.filename:
-                photo_filename = os.path.join(app.config['UPLOAD_FOLDER'], photo.filename)
-                photo.save(photo_filename)
-                
+                filename = secure_filename(photo.filename)
+                photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                photo.save(photo_path)
+
                 # Insert the new photo into the database
-                cursor.execute("INSERT INTO vehicle_photos (vehicle_id, photo) VALUES (?, ?)", (vehicle_id, photo.filename))
+                cursor.execute(
+                    "INSERT INTO vehicle_photos (vehicle_id, photo) VALUES (?, ?)",
+                    (vehicle_id, filename),
+                )
         
         conn.commit()
         conn.close()
@@ -193,7 +201,8 @@ def delete_vehicle(vehicle_id):
 
     # Delete the photos from the filesystem
     for photo in photos:
-        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], photo[0])
+        filename = secure_filename(photo[0])
+        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         if os.path.exists(photo_path):
             os.remove(photo_path)
 
