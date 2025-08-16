@@ -24,10 +24,46 @@ def make_photo_url(value: str | None) -> str | None:
 @bp.route("/api/vehicles", methods=["GET"])
 @login_required
 def api_list_vehicles():
+    # query params
+    try:
+        page = max(int(request.args.get("page", 1)), 1)
+    except Exception:
+        page = 1
+    try:
+        per_page = min(max(int(request.args.get("per_page", 10)), 1), 100)
+    except Exception:
+        per_page = 10
+
+    q = (request.args.get("q") or "").strip()
+    sort = (request.args.get("sort") or "id").lower()
+    order = (request.args.get("order") or "desc").lower()
+    allowed_sort = {"id", "marca", "modelo", "matricula", "ano"}
+    if sort not in allowed_sort:
+        sort = "id"
+    if order not in {"asc", "desc"}:
+        order = "desc"
+
     conn = create_connection()
     cur = conn.cursor()
     try:
-        cur.execute(sqlp("""
+        # WHERE (optional search)
+        where = []
+        params = []
+        if q:
+            where.append("(v.marca LIKE ? OR v.modelo LIKE ? OR v.matricula LIKE ?)")
+            like = f"%{q}%"
+            params.extend([like, like, like])
+        where_sql = f"WHERE {' AND '.join(where)}" if where else ""
+
+        # total
+        cur.execute(sqlp(f"SELECT COUNT(*) FROM vehicles v {where_sql}"), tuple(params))
+        total = int(cur.fetchone()[0])
+
+        # page slice
+        offset = (page - 1) * per_page
+
+        # list query
+        cur.execute(sqlp(f"""
             SELECT v.id, v.marca, v.modelo, v.matricula, v.ano,
                    (SELECT vp.photo
                       FROM vehicle_photos vp
@@ -35,8 +71,10 @@ def api_list_vehicles():
                      ORDER BY vp.id ASC
                      LIMIT 1) AS photo_key
             FROM vehicles v
-            ORDER BY v.id DESC
-        """))
+            {where_sql}
+            ORDER BY v.{sort} {order.upper()}, v.id DESC
+            LIMIT ? OFFSET ?
+        """), tuple(params + [per_page, offset]))
         rows = cur.fetchall()
 
         items = []
@@ -63,47 +101,72 @@ def api_list_vehicles():
                 "photo_url": photo_url
             })
 
-        # consistent JSON shape
-        return jsonify({"ok": True, "data": items}), 200
+        return jsonify({
+            "ok": True,
+            "data": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page
+        }), 200
     finally:
         conn.close()
+
 
 @bp.route("/api/vehicles", methods=["POST"])
 @login_required
 def api_create_vehicle():
-    # aceita multipart/form-data (com fotos) ou application/json (sem fotos)
-    marca = request.form.get("marca") or (request.json or {}).get("marca")
-    modelo = request.form.get("modelo") or (request.json or {}).get("modelo")
-    CC = request.form.get("CC") or (request.json or {}).get("CC")
-    cor = request.form.get("cor") or (request.json or {}).get("cor")
-    matricula = request.form.get("matricula") or (request.json or {}).get("matricula")
-    ano = request.form.get("ano") or (request.json or {}).get("ano")
-    num_lugares = request.form.get("num_lugares") or (request.json or {}).get("num_lugares")
-    local_garagem = request.form.get("local_garagem") or (request.json or {}).get("local_garagem")
-    estado_geral = request.form.get("estado_geral") or (request.json or {}).get("estado_geral")
+    # Accepts multipart/form-data (with photos) OR application/json (no photos)
+    data = request.get_json(silent=True) or {}  # <-- safe, won't raise 415
+
+    def pick(name: str):
+        # Prefer form value (multipart), otherwise JSON value (if any)
+        v = request.form.get(name)
+        if v is None:
+            v = data.get(name)
+        return v
+
+    def _num(v):
+        if v in (None, "", "null"):
+            return None
+        try:
+            return int(v)
+        except Exception:
+            return None
+
+    marca         = pick("marca")
+    modelo        = pick("modelo")
+    CC            = _num(pick("CC"))
+    cor           = pick("cor")
+    matricula     = pick("matricula")
+    ano           = _num(pick("ano"))
+    num_lugares   = _num(pick("num_lugares"))
+    local_garagem = pick("local_garagem")
+    estado_geral  = pick("estado_geral")
 
     if not (marca and modelo and matricula):
-        return jsonify({"error":"Campos obrigatórios: marca, modelo, matrícula."}), 400
+        return jsonify({"message": "Campos obrigatórios: marca, modelo, matrícula."}), 400
 
     conn = create_connection()
     cur = conn.cursor()
     try:
+        # Insert vehicle
+        params = (marca, modelo, CC, cor, matricula, ano, num_lugares, local_garagem, estado_geral)
         if is_pg():
             cur.execute(sqlp("""
                 INSERT INTO vehicles (marca, modelo, CC, cor, matricula, ano, num_lugares, local_garagem, estado_geral)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 RETURNING id
-            """), (marca, modelo, CC, cor, matricula, ano, num_lugares, local_garagem, estado_geral))
+            """), params)
             vehicle_id = cur.fetchone()[0]
         else:
             cur.execute(sqlp("""
                 INSERT INTO vehicles (marca, modelo, CC, cor, matricula, ano, num_lugares, local_garagem, estado_geral)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """), (marca, modelo, CC, cor, matricula, ano, num_lugares, local_garagem, estado_geral))
+            """), params)
             vehicle_id = cur.lastrowid
 
-        # fotos (opcional)
-        photos = request.files.getlist("photos")
+        # Handle uploaded photos (only present for multipart/form-data)
+        photos = request.files.getlist("photos") if request.files else []
         if photos:
             try:
                 from .storage import using_s3, put_fileobj
@@ -112,24 +175,39 @@ def api_create_vehicle():
                 put_fileobj = None
 
             os.makedirs(current_app.config["UPLOAD_FOLDER"], exist_ok=True)
+
             for photo in photos:
-                if photo and photo.filename and allowed_file(photo.filename):
-                    filename = secure_filename(photo.filename)
-                    if using_s3() and put_fileobj:
-                        key = put_fileobj(photo.stream, prefix=f"vehicles/{vehicle_id}", filename=filename, content_type=photo.mimetype)
-                        stored_value = key
-                    else:
-                        path = os.path.join(current_app.config["UPLOAD_FOLDER"], filename)
-                        photo.save(path)
-                        stored_value = filename
-                    cur.execute(sqlp("INSERT INTO vehicle_photos (vehicle_id, photo) VALUES (?, ?)"),
-                                (vehicle_id, stored_value))
+                if not photo or not photo.filename:
+                    continue
+                if not allowed_file(photo.filename):
+                    continue
+                filename = secure_filename(photo.filename)
+                if using_s3() and put_fileobj:
+                    key = put_fileobj(
+                        photo.stream,
+                        prefix=f"vehicles/{vehicle_id}",
+                        filename=filename,
+                        content_type=photo.mimetype,
+                    )
+                    stored_value = key
+                else:
+                    path = os.path.join(current_app.config["UPLOAD_FOLDER"], filename)
+                    photo.save(path)
+                    stored_value = filename
+
+                cur.execute(
+                    sqlp("INSERT INTO vehicle_photos (vehicle_id, photo) VALUES (?, ?)"),
+                    (vehicle_id, stored_value),
+                )
 
         conn.commit()
-        return jsonify({"id": vehicle_id}), 201
+
+        # Return consistent shape
+        return jsonify({"ok": True, "data": {"id": vehicle_id}}), 201
+
     except Exception as e:
         conn.rollback()
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"ok": False, "error": {"message": str(e)}}), 400
     finally:
         conn.close()
 
@@ -158,6 +236,103 @@ def get_vehicle(vehicle_id: int):
         return jsonify({"ok": True, "data": vehicle}), 200
     finally:
         conn.close()
+
+def _num(v):
+    if v in (None, "", "null"): return None
+    try:
+        return int(v)
+    except Exception:
+        return None
+
+
+@bp.post("/api/vehicles/<int:vehicle_id>")
+@login_required
+def update_vehicle(vehicle_id: int):
+    """
+    Update a vehicle using POST + method override (_method=PUT or X-HTTP-Method-Override: PUT).
+    Accepts multipart form with scalar fields, delete_photos[], and photos uploads.
+    """
+    method_override = (request.form.get("_method") or request.headers.get("X-HTTP-Method-Override") or "").upper()
+    if method_override not in ("PUT", "PATCH"):
+        return jsonify({"ok": False, "error": {"message": "Method Not Allowed"}}), 405
+
+    conn = create_connection()
+    cur = conn.cursor()
+    try:
+        # Ensure vehicle exists
+        cur.execute(sqlp("SELECT id FROM vehicles WHERE id = ?"), (vehicle_id,))
+        if not cur.fetchone():
+            return jsonify({"ok": False, "error": {"message": "Vehicle not found"}}), 404
+
+        # --- Update scalar fields (only those present) ---
+        fields = {
+            "marca": request.form.get("marca"),
+            "modelo": request.form.get("modelo"),
+            "matricula": request.form.get("matricula"),
+            "ano": request.form.get("ano"),
+            "CC": request.form.get("CC"),
+            "num_lugares": request.form.get("num_lugares"),
+            "cor": request.form.get("cor"),
+            "estado_geral": request.form.get("estado_geral"),
+            "local_garagem": request.form.get("local_garagem"),
+        }
+
+        # Build dynamic UPDATE for provided keys only
+        set_parts, params = [], []
+        for k, v in fields.items():
+            if v is not None:
+                if k in ("ano", "CC", "num_lugares"):
+                    v = _num(v)
+                set_parts.append(f"{k} = ?")
+                params.append(v)
+        if set_parts:
+            params.append(vehicle_id)
+            cur.execute(sqlp(f"UPDATE vehicles SET {', '.join(set_parts)} WHERE id = ?"), tuple(params))
+
+        # --- Handle deletions ---
+        # Accept both delete_photos and delete_photos[] for convenience
+        to_delete = request.form.getlist("delete_photos") + request.form.getlist("delete_photos[]")
+        if to_delete:
+            # Remove from DB (where name matches)
+            for name in to_delete:
+                safe = os.path.basename(name)
+                cur.execute(sqlp("DELETE FROM vehicle_photos WHERE vehicle_id = ? AND photo = ?"), (vehicle_id, safe))
+                # Remove from disk if present
+                path = os.path.join(current_app.config["UPLOAD_FOLDER"], safe)
+                if os.path.isfile(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+
+        # --- Handle new uploads ---
+        files = request.files.getlist("photos")
+        for f in files:
+            if not f or not f.filename:
+                continue
+            fname = secure_filename(f.filename)
+            save_path = os.path.join(current_app.config["UPLOAD_FOLDER"], fname)
+            # If you want to avoid collisions, prefix with vehicle_id or a uuid
+            # from uuid import uuid4; fname = f"{vehicle_id}_{uuid4().hex}_{secure_filename(f.filename)}"
+            f.save(save_path)
+            cur.execute(sqlp("INSERT INTO vehicle_photos (vehicle_id, photo) VALUES (?, ?)"), (vehicle_id, fname))
+
+        conn.commit()
+
+        # Return the updated record (same shape as GET)
+        # vehicle
+        cur.execute(sqlp("SELECT * FROM vehicles WHERE id = ?"), (vehicle_id,))
+        row = cur.fetchone()
+        cols = [c[0] for c in cur.description]
+        vehicle = dict(zip(cols, row))
+        # photos
+        cur.execute(sqlp("SELECT photo FROM vehicle_photos WHERE vehicle_id = ? ORDER BY id ASC"), (vehicle_id,))
+        vehicle["photos"] = [r[0] for r in cur.fetchall()]
+
+        return jsonify({"ok": True, "data": vehicle}), 200
+    finally:
+        conn.close()
+
 
 @bp.get("/uploads/<path:filename>")
 def uploaded_file(filename: str):
