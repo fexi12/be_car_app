@@ -1,10 +1,9 @@
 # car/routes.py
 import os
-from flask import Blueprint, render_template, request, redirect, url_for, flash, current_app, send_from_directory
+from flask import Blueprint,jsonify, request, url_for, current_app, send_from_directory
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
 from .database import create_connection, sqlp, is_pg
-from flask import jsonify
 
 bp = Blueprint("main", __name__)
 
@@ -12,53 +11,62 @@ ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 def allowed_file(filename: str) -> bool:
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@bp.route("/")
-@login_required
-def index():
-    conn = create_connection()
-    cur = conn.cursor()
-    # lista veículos + uma foto (se existir)
-    cur.execute(sqlp("""
-        SELECT v.id, v.marca, v.modelo, v.matricula, v.ano,
-               (SELECT photo FROM vehicle_photos vp WHERE vp.vehicle_id = v.id LIMIT 1) AS photo
-        FROM vehicles v
-        ORDER BY v.id DESC
-    """))
-    rows = cur.fetchall()
-    conn.close()
-    return render_template("index.html", vehicles=rows)
+def make_photo_url(value: str | None) -> str | None:
+    """Turn a DB value (filename or S3 key/full URL) into a public URL."""
+    if not value:
+        return None
+    v = str(value)
+    if v.lower().startswith(("http://", "https://")):
+        return v
+    # serve from our uploads route; _external makes it absolute for the browser
+    return url_for("main.uploaded_file", filename=v, _external=True)
 
 @bp.route("/api/vehicles", methods=["GET"])
 @login_required
 def api_list_vehicles():
     conn = create_connection()
     cur = conn.cursor()
-    cur.execute(sqlp("""
-        SELECT v.id, v.marca, v.modelo, v.matricula, v.ano,
-               (SELECT photo FROM vehicle_photos vp WHERE vp.vehicle_id = v.id LIMIT 1) AS photo_key
-        FROM vehicles v
-        ORDER BY v.id DESC
-    """))
-    rows = cur.fetchall()
-    conn.close()
+    try:
+        cur.execute(sqlp("""
+            SELECT v.id, v.marca, v.modelo, v.matricula, v.ano,
+                   (SELECT vp.photo
+                      FROM vehicle_photos vp
+                     WHERE vp.vehicle_id = v.id
+                     ORDER BY vp.id ASC
+                     LIMIT 1) AS photo_key
+            FROM vehicles v
+            ORDER BY v.id DESC
+        """))
+        rows = cur.fetchall()
 
-    items = []
-    for r in rows:
-        photo_key = r[5]
-        # se estiveres com MinIO, obter URL assinada; senão usa a rota local
-        try:
-            from .storage import using_s3, get_url
-            photo_url = get_url(photo_key) if (photo_key and using_s3()) else (
-                url_for('main.uploaded_file', filename=photo_key) if photo_key else None
-            )
-        except Exception:
+        items = []
+        for r in rows:
+            vid, marca, modelo, matricula, ano, photo_key = r
+
+            # Try S3/MinIO first; else local uploads
             photo_url = None
+            try:
+                from .storage import using_s3, get_url
+                if photo_key and using_s3():
+                    photo_url = get_url(photo_key)
+                else:
+                    photo_url = make_photo_url(photo_key)
+            except Exception:
+                photo_url = make_photo_url(photo_key)
 
-        items.append({
-            "id": r[0], "marca": r[1], "modelo": r[2],
-            "matricula": r[3], "ano": r[4], "photo_url": photo_url
-        })
-    return jsonify(items), 200
+            items.append({
+                "id": vid,
+                "marca": marca,
+                "modelo": modelo,
+                "matricula": matricula,
+                "ano": ano,
+                "photo_url": photo_url
+            })
+
+        # consistent JSON shape
+        return jsonify({"ok": True, "data": items}), 200
+    finally:
+        conn.close()
 
 @bp.route("/api/vehicles", methods=["POST"])
 @login_required
@@ -124,3 +132,34 @@ def api_create_vehicle():
         return jsonify({"error": str(e)}), 400
     finally:
         conn.close()
+
+@bp.get("/api/vehicles/<int:vehicle_id>")
+@login_required
+def get_vehicle(vehicle_id: int):
+    """Return one vehicle with its photos (JSON)."""
+    conn = create_connection()
+    cur = conn.cursor()
+    try:
+        # vehicle row (get whatever columns exist)
+        cur.execute(sqlp("SELECT * FROM vehicles WHERE id = ?"), (vehicle_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({"ok": False, "error": {"message": "Vehicle not found"}}), 404
+
+        # turn row into dict by using cursor description
+        cols = [c[0] for c in cur.description]
+        vehicle = dict(zip(cols, row))
+
+        # photos
+        cur.execute(sqlp("SELECT photo FROM vehicle_photos WHERE vehicle_id = ? ORDER BY id ASC"), (vehicle_id,))
+        photos = [r[0] for r in cur.fetchall()]
+        vehicle["photos"] = photos
+
+        return jsonify({"ok": True, "data": vehicle}), 200
+    finally:
+        conn.close()
+
+@bp.get("/uploads/<path:filename>")
+def uploaded_file(filename: str):
+    """Serve uploaded files (so FE can render images)."""
+    return send_from_directory(current_app.config["UPLOAD_FOLDER"], filename)
