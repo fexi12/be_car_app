@@ -1,1 +1,1 @@
-web: gunicorn -w 2 -k gthread -b 0.0.0.0:$PORT 'car.__init__:create_app()'
+web: gunicorn "car.app:create_app()" --bind 0.0.0.0:$PORT --workers 2
