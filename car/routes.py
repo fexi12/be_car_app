@@ -112,6 +112,24 @@ def api_list_vehicles():
         conn.close()
 
 
+@bp.route("/api/vehicles/<int:vehicle_id>", methods=["DELETE"])
+@login_required
+def api_delete_vehicle(vehicle_id):
+    conn = create_connection()
+    cur = conn.cursor()
+    try:
+        # Remove photos first
+        cur.execute(sqlp("DELETE FROM vehicle_photos WHERE vehicle_id = ?"), (vehicle_id,))
+        # Remove the vehicle
+        cur.execute(sqlp("DELETE FROM vehicles WHERE id = ?"), (vehicle_id,))
+        conn.commit()
+        return jsonify({"ok": True}), 200
+    except Exception as e:
+        conn.rollback()
+        return jsonify({"ok": False, "error": {"message": str(e)}}), 400
+    finally:
+        conn.close()
+
 @bp.route("/api/vehicles", methods=["POST"])
 @login_required
 def api_create_vehicle():
