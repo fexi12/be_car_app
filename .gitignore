@@ -3,5 +3,6 @@ __pycache__/
 instance/
 .env
 uploads/
-database.db
 .venv/
+local.db
+car/database.db

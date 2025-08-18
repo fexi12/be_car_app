@@ -6,6 +6,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 from .database import create_tables, create_connection, sqlp, seed_admin_users
+from .auth import auth_bp
 
 
 def _is_prod():
@@ -117,32 +118,8 @@ def create_app():
     # Routes
     from .routes import bp
     app.register_blueprint(bp)
+    app.register_blueprint(auth_bp)
 
-    # -------- AUTH API routes --------
-    @app.route("/api/login", methods=["POST"])
-    def api_login():
-        data = request.get_json(silent=True) or request.form or {}
-        username = data.get("username")
-        password = data.get("password")
-        if not username or not password:
-            return _err("username and password required", 400)
-
-        conn = create_connection()
-        cur = conn.cursor()
-        cur.execute(sqlp("SELECT id, username, password_hash FROM users WHERE username = ?"), (username,))
-        row = cur.fetchone()
-        conn.close()
-
-        if row and check_password_hash(row[2], password):
-            login_user(User(row[0], row[1]))
-            return _ok({"message": "Login successful"})
-        return _err("Invalid credentials", 401)
-
-    @app.route("/api/logout", methods=["POST"])
-    @login_required
-    def api_logout():
-        logout_user()
-        return _ok({"message": "Logged out"})
 
     # ---- JSON error handlers (consistent shape) ----
     @app.errorhandler(404)
