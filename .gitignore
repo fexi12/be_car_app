@@ -6,3 +6,4 @@ uploads/
 .venv/
 local.db
 car/database.db
+car/database.db
