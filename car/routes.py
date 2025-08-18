@@ -3,7 +3,8 @@ import os, io, zipfile
 from flask import Blueprint,jsonify, request, url_for, current_app, send_from_directory,send_file
 from flask_login import login_required, current_user
 from werkzeug.utils import secure_filename
-from .database import create_connection, sqlp, is_pg
+from .database import create_connection, sqlp, is_pg, get_user_by_id, is_admin_user
+
 
 
 bp = Blueprint("main", __name__)
@@ -355,8 +356,9 @@ def update_vehicle(vehicle_id: int):
 @bp.get("/api/backup")  # protect with @login_required and your admin check
 @login_required
 def api_backup():
-    if not (current_user.is_authenticated and current_user.username == os.getenv("ADMIN_USER","admin")):
-        return jsonify({"ok": False, "error": {"message":"Forbidden"}}), 403
+    u = get_user_by_id(int(current_user.id))
+    if not is_admin_user(u):
+        return jsonify({"ok": False, "error": {"message": "Forbidden"}}), 403
 
     db_path = os.getenv("DATABASE_URL","sqlite:///").split("sqlite:///",1)[1]
     up_dir = current_app.config["UPLOAD_FOLDER"]

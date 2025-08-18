@@ -5,7 +5,7 @@ from flask_login import LoginManager, UserMixin, login_required, login_user, log
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
-from .database import create_tables, create_connection, sqlp
+from .database import create_tables, create_connection, sqlp, seed_admin_users
 
 
 def _is_prod():
@@ -53,6 +53,7 @@ def create_app():
         PREFERRED_URL_SCHEME="https" if PROD else "http",
     )
 
+    
     # Uploads: persist on Railway with a Volume mounted at /data
     default_upload = "/data/uploads" if PROD else os.path.join(os.getcwd(), "uploads")
     app.config["UPLOAD_FOLDER"] = os.getenv("UPLOAD_FOLDER", default_upload)
@@ -80,6 +81,8 @@ def create_app():
 
     # DB setup
     create_tables()
+
+    seed_admin_users()
 
     # ---- CORS (only when NOT using FE proxy) ----
     if not FE_PROXY:
@@ -140,25 +143,6 @@ def create_app():
     def api_logout():
         logout_user()
         return _ok({"message": "Logged out"})
-
-    @app.route("/api/seed-admin", methods=["POST", "GET"])
-    def seed_admin():
-        username = os.getenv("ADMIN_USER", "admin")
-        password = os.getenv("ADMIN_PASS", "admin123")
-        conn = create_connection()
-        cur = conn.cursor()
-        try:
-            cur.execute(
-                sqlp("INSERT INTO users (username, password_hash) VALUES (?, ?)"),
-                (username, generate_password_hash(password))
-            )
-            conn.commit()
-            return _ok({"message": "Admin created"}, 201)
-        except Exception:
-            conn.rollback()
-            return _ok({"message": "Admin already exists"}, 200)
-        finally:
-            conn.close()
 
     # ---- JSON error handlers (consistent shape) ----
     @app.errorhandler(404)
