@@ -117,7 +117,9 @@ def db_cursor(commit: bool = False):
 
 def create_tables():
     """
-    Create tables for vehicles, vehicle_photos, users (with role).
+    Create tables for:
+    - vehicles, vehicle_photos, users (with role): car management
+    - scraped_listings, listing_price_history: Standvirtual price tracker
     Role is 'admin' or 'user'; default is 'user'.
     """
     with db_cursor(commit=True) as cur:
@@ -153,6 +155,37 @@ def create_tables():
             """)
             # Migrate old users table without role
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user';")
+            
+            # Standvirtual scraper tables
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS scraped_listings (
+              id SERIAL PRIMARY KEY,
+              listing_id TEXT NOT NULL UNIQUE,
+              brand TEXT,
+              model TEXT,
+              year INTEGER,
+              price INTEGER,
+              url TEXT,
+              mileage INTEGER,
+              fuel_type TEXT,
+              transmission TEXT,
+              current_price INTEGER,
+              scraped_at TIMESTAMPTZ DEFAULT now(),
+              updated_at TIMESTAMPTZ DEFAULT now()
+            );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scraped_listings_listing_id ON scraped_listings(listing_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scraped_listings_brand ON scraped_listings(brand);")
+            
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS listing_price_history (
+              id SERIAL PRIMARY KEY,
+              listing_id TEXT NOT NULL REFERENCES scraped_listings(listing_id) ON DELETE CASCADE,
+              price INTEGER NOT NULL,
+              recorded_at TIMESTAMPTZ DEFAULT now()
+            );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_listing_price_history_listing_id ON listing_price_history(listing_id);")
 
         elif is_mysql():
             cur.execute("""
@@ -190,6 +223,38 @@ def create_tables():
                 cur.execute("ALTER TABLE users ADD COLUMN role ENUM('admin','user') NOT NULL DEFAULT 'user';")
             except Exception:
                 pass  # column already exists
+            
+            # Standvirtual scraper tables
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS scraped_listings (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              listing_id VARCHAR(255) NOT NULL UNIQUE,
+              brand VARCHAR(255),
+              model VARCHAR(255),
+              year INT,
+              price INT,
+              url VARCHAR(1024),
+              mileage INT,
+              fuel_type VARCHAR(255),
+              transmission VARCHAR(255),
+              current_price INT,
+              scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scraped_listings_listing_id ON scraped_listings(listing_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scraped_listings_brand ON scraped_listings(brand);")
+            
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS listing_price_history (
+              id INT AUTO_INCREMENT PRIMARY KEY,
+              listing_id VARCHAR(255) NOT NULL,
+              price INT NOT NULL,
+              recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+              CONSTRAINT fk_listing_id FOREIGN KEY (listing_id) REFERENCES scraped_listings(listing_id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_listing_price_history_listing_id ON listing_price_history(listing_id);")
 
         else:
             # SQLite
@@ -228,6 +293,38 @@ def create_tables():
             if "role" not in cols:
                 # SQLite can't ADD COLUMN with CHECK reliably on old versions; add basic column
                 cur.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user';")
+            
+            # Standvirtual scraper tables
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS scraped_listings (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              listing_id TEXT NOT NULL UNIQUE,
+              brand TEXT,
+              model TEXT,
+              year INTEGER,
+              price INTEGER,
+              url TEXT,
+              mileage INTEGER,
+              fuel_type TEXT,
+              transmission TEXT,
+              current_price INTEGER,
+              scraped_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scraped_listings_listing_id ON scraped_listings(listing_id);")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_scraped_listings_brand ON scraped_listings(brand);")
+            
+            cur.execute("""
+            CREATE TABLE IF NOT EXISTS listing_price_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              listing_id TEXT NOT NULL,
+              price INTEGER NOT NULL,
+              recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              FOREIGN KEY(listing_id) REFERENCES scraped_listings(listing_id) ON DELETE CASCADE
+            );
+            """)
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_listing_price_history_listing_id ON listing_price_history(listing_id);")
 
 
 # ---- Admin seeding (exactly up to three admin accounts) ----------------------

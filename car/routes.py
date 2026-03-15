@@ -379,3 +379,117 @@ def api_backup():
 def uploaded_file(filename: str):
     """Serve uploaded files (so FE can render images)."""
     return send_from_directory(current_app.config["UPLOAD_FOLDER"], filename)
+
+
+# ---- Standvirtual price tracker routes ----
+
+@bp.get("/api/scraped-listings")
+def api_scraped_listings():
+    """
+    Get all scraped car listings with optional filtering.
+    Query params: ?brand=Toyota&model=Corolla&limit=50
+    """
+    try:
+        brand = request.args.get("brand", "").strip()
+        model = request.args.get("model", "").strip()
+        limit = min(max(int(request.args.get("limit", 50)), 1), 500)
+    except Exception:
+        limit = 50
+    
+    conn = create_connection()
+    cur = conn.cursor()
+    try:
+        query = "SELECT id, listing_id, brand, model, year, price, current_price, url, mileage FROM scraped_listings WHERE 1=1"
+        params = []
+        
+        if brand:
+            query += " AND brand ILIKE ?" if is_pg() else " AND brand LIKE ?"
+            params.append(f"%{brand}%")
+        if model:
+            query += " AND model ILIKE ?" if is_pg() else " AND model LIKE ?"
+            params.append(f"%{model}%")
+        
+        query += " ORDER BY current_price DESC LIMIT ?"
+        params.append(limit)
+        
+        cur.execute(sqlp(query), params)
+        rows = cur.fetchall()
+        
+        cols = [c[0] for c in cur.description] if cur.description else []
+        listings = [dict(zip(cols, row)) for row in rows]
+        
+        return jsonify({"ok": True, "count": len(listings), "listings": listings}), 200
+    finally:
+        conn.close()
+
+
+@bp.get("/api/scraped-listings/<listing_id>/history")
+def api_listing_price_history(listing_id: str):
+    """
+    Get price history for a specific listing.
+    Query params: ?limit=30
+    """
+    try:
+        limit = min(max(int(request.args.get("limit", 30)), 1), 500)
+    except Exception:
+        limit = 30
+    
+    conn = create_connection()
+    cur = conn.cursor()
+    try:
+        # Get listing info
+        cur.execute(sqlp("SELECT id, listing_id, brand, model, year, url FROM scraped_listings WHERE listing_id = ?"), (listing_id,))
+        listing = cur.fetchone()
+        if not listing:
+            return jsonify({"ok": False, "error": "Listing not found"}), 404
+        
+        listing_cols = [c[0] for c in cur.description]
+        listing_data = dict(zip(listing_cols, listing))
+        
+        # Get price history (newest first, limit)
+        cur.execute(sqlp("""
+            SELECT price, recorded_at FROM listing_price_history 
+            WHERE listing_id = ? 
+            ORDER BY recorded_at DESC 
+            LIMIT ?
+        """), (listing_id, limit))
+        
+        history = cur.fetchall()
+        history_cols = [c[0] for c in cur.description]
+        history_data = [dict(zip(history_cols, row)) for row in history]
+        history_data.reverse()  # Chronological order (oldest first)
+        
+        return jsonify({
+            "ok": True,
+            "listing": listing_data,
+            "history": history_data
+        }), 200
+    finally:
+        conn.close()
+
+
+@bp.get("/api/scraped-listings/stats")
+def api_scraped_stats():
+    """
+    Get scraper statistics (total listings, price records, last scrape).
+    """
+    conn = create_connection()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(*) FROM scraped_listings")
+        total_listings = cur.fetchone()[0]
+        
+        cur.execute("SELECT COUNT(*) FROM listing_price_history")
+        total_history = cur.fetchone()[0]
+        
+        cur.execute(sqlp("SELECT MAX(scraped_at) FROM scraped_listings"))
+        last_scrape = cur.fetchone()[0]
+        
+        return jsonify({
+            "ok": True,
+            "total_listings": total_listings,
+            "total_price_records": total_history,
+            "last_scrape": last_scrape
+        }), 200
+    finally:
+        conn.close()
