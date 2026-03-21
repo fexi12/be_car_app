@@ -493,3 +493,25 @@ def api_scraped_stats():
         }), 200
     finally:
         conn.close()
+
+@bp.route("/api/photos/export", methods=["GET"])
+@login_required
+def export_photos():
+    """Download all photos as ZIP."""
+    uploads_dir = current_app.config["UPLOAD_FOLDER"]
+    
+    # Create ZIP in memory
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for photo in os.listdir(uploads_dir):
+            photo_path = os.path.join(uploads_dir, photo)
+            if os.path.isfile(photo_path):
+                zf.write(photo_path, arcname=photo)
+    
+    zip_buffer.seek(0)
+    return send_file(
+        zip_buffer,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name='brandacars-photos.zip'
+    )
