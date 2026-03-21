@@ -515,3 +515,53 @@ def export_photos():
         as_attachment=True,
         download_name='brandacars-photos.zip'
     )
+
+@bp.route("/api/photos/import-zip", methods=["POST"])
+@login_required
+def import_photos_zip():
+    """Import photos from uploaded ZIP file to Supabase Storage."""
+    import requests
+    
+    if 'file' not in request.files:
+        return {"error": "No file provided"}, 400
+    
+    zip_file = request.files['file']
+    
+    # Extract and upload to Supabase
+    supabase_url = f"{os.environ.get('SUPABASE_URL')}/storage/v1/object/brandacars-photos"
+    supabase_key = os.environ.get('SUPABASE_ANON_KEY')
+    headers = {"Authorization": f"Bearer {supabase_key}"}
+    
+    uploaded = []
+    errors = []
+    
+    try:
+        with zipfile.ZipFile(zip_file) as zf:
+            for file_info in zf.infolist():
+                if file_info.is_dir():
+                    continue
+                
+                # Extract file content
+                photo_data = zf.read(file_info.filename)
+                
+                # Upload to Supabase
+                r = requests.post(
+                    f"{supabase_url}/{file_info.filename}",
+                    data=photo_data,
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if r.status_code in [200, 201]:
+                    uploaded.append(file_info.filename)
+                else:
+                    errors.append(f"{file_info.filename}: {r.status_code}")
+    
+    except Exception as e:
+        return {"error": str(e)}, 500
+    
+    return {
+        "uploaded": len(uploaded),
+        "errors": errors,
+        "message": f"Imported {len(uploaded)} photos"
+    }
